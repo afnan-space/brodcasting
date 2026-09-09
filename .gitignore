@@ -1,0 +1,40 @@
+# Environment variables & Secrets (CRITICAL: Do NOT commit .env!)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Broadcast generated files & reports
+*.log
+broadcast.log
+admin_bot.log
+blocked_users.txt
+failed_users.txt
+broadcast_state.json
+dynamic_message.txt
+custom_message.txt
+
+# OS and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Nested duplicate directory
+brodcasting/
+

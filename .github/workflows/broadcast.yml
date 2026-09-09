@@ -1,0 +1,227 @@
+name: 🚀 Telegram Bulk Broadcaster
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution Mode'
+        required: true
+        type: choice
+        default: 'live'
+        options:
+          - 'live'
+          - 'dry-run'
+          - 'test'
+      message:
+        description: 'Custom Message Text or HTML (Leave blank to use message_template.txt)'
+        required: false
+        type: string
+        default: ''
+      photo_url:
+        description: 'Optional Banner Image URL'
+        required: false
+        type: string
+        default: ''
+      button_text:
+        description: 'Optional Inline Button Text (e.g. 🤖 Open Bot)'
+        required: false
+        type: string
+        default: ''
+      button_url:
+        description: 'Optional Inline Button URL (e.g. https://t.me/yourbot)'
+        required: false
+        type: string
+        default: ''
+      rate:
+        description: 'Rate limit (messages/sec, recommended: 25, max safe: 30)'
+        required: true
+        type: number
+        default: 25
+      limit:
+        description: 'User limit (Optional number, e.g. 100 or leave empty for all database users)'
+        required: false
+        type: string
+        default: ''
+      order:
+        description: 'Fetch order'
+        required: true
+        type: choice
+        default: 'desc'
+        options:
+          - 'desc'
+          - 'asc'
+      resume:
+        description: 'Resume from previous checkpoint if available'
+        required: false
+        type: boolean
+        default: false
+      test_user_id:
+        description: 'Target Telegram ID for test mode (Leave empty for ADMIN_USER_ID secret)'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: telegram-broadcast
+  cancel-in-progress: false
+
+jobs:
+  broadcast:
+    name: Run Telegram Broadcast
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      PYTHONUNBUFFERED: "1"
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔑 Verify Required Secrets
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "::error::BOT_TOKEN secret is missing! Please configure it under Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is missing! Please configure it under Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "✅ BOT_TOKEN and DATABASE_URL secrets verified."
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: ⚙️ Build Broadcast Arguments
+        id: prep
+        shell: bash
+        env:
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_MESSAGE: ${{ github.event.inputs.message }}
+          INPUT_PHOTO_URL: ${{ github.event.inputs.photo_url }}
+          INPUT_BUTTON_TEXT: ${{ github.event.inputs.button_text }}
+          INPUT_BUTTON_URL: ${{ github.event.inputs.button_url }}
+          INPUT_RATE: ${{ github.event.inputs.rate }}
+          INPUT_LIMIT: ${{ github.event.inputs.limit }}
+          INPUT_ORDER: ${{ github.event.inputs.order }}
+          INPUT_RESUME: ${{ github.event.inputs.resume }}
+          INPUT_TEST_USER: ${{ github.event.inputs.test_user_id }}
+        run: |
+          # Use automated skip-confirmation flag
+          ARGS="--yes"
+
+          # Message Rate
+          RATE="${INPUT_RATE:-25}"
+          ARGS="$ARGS --rate $RATE"
+
+          # User Fetch Order
+          ORDER="${INPUT_ORDER:-desc}"
+          ARGS="$ARGS --order $ORDER"
+
+          # Optional User Limit
+          if [ -n "$INPUT_LIMIT" ]; then
+            ARGS="$ARGS --limit $INPUT_LIMIT"
+          fi
+
+          # Optional Photo URL
+          if [ -n "$INPUT_PHOTO_URL" ]; then
+            ARGS="$ARGS --photo-url \"$INPUT_PHOTO_URL\""
+          fi
+
+          # Optional Inline Button Text & URL
+          if [ -n "$INPUT_BUTTON_TEXT" ]; then
+            ARGS="$ARGS --button-text \"$INPUT_BUTTON_TEXT\""
+          fi
+          if [ -n "$INPUT_BUTTON_URL" ]; then
+            ARGS="$ARGS --button-url \"$INPUT_BUTTON_URL\""
+          fi
+
+          # Custom Message or Default message_template.txt
+          if [ -n "$INPUT_MESSAGE" ]; then
+            echo "Using custom message passed from workflow input."
+            printf '%s\n' "$INPUT_MESSAGE" > dynamic_message.txt
+            ARGS="$ARGS --message-file dynamic_message.txt"
+          fi
+
+          # Execution Mode Handling
+          if [ "$INPUT_MODE" = "dry-run" ]; then
+            ARGS="$ARGS --dry-run"
+          elif [ "$INPUT_MODE" = "test" ]; then
+            if [ -n "$INPUT_TEST_USER" ]; then
+              ARGS="$ARGS --test-user $INPUT_TEST_USER"
+            else
+              ARGS="$ARGS --test"
+            fi
+          else
+            # Live Broadcast
+            if [ "$INPUT_RESUME" = "true" ]; then
+              ARGS="$ARGS --resume"
+            else
+              ARGS="$ARGS --fresh"
+            fi
+          fi
+
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+          echo "Configured CLI arguments: $ARGS"
+
+      - name: 🚀 Run Broadcast Script
+        shell: bash
+        run: |
+          echo "================================================================"
+          echo "          Starting Telegram Broadcaster on GitHub Actions       "
+          echo "================================================================"
+          python broadcast.py ${{ steps.prep.outputs.args }}
+
+      - name: 📊 Generate Run Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## 📢 Telegram Broadcast Execution Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Mode** | \`${{ github.event.inputs.mode || 'live' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Configured Rate** | \`${{ github.event.inputs.rate || '25' }} msg/s\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Order** | \`${{ github.event.inputs.order || 'desc' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered By** | \`@${{ github.actor }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Run Timestamp** | \`$(date -u '+%Y-%m-%d %H:%M:%S UTC')\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "broadcast_state.json" ]; then
+            echo "### 📈 Final Checkpoint Data" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat broadcast_state.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f "blocked_users.txt" ]; then
+            BLOCKED_COUNT=$(wc -l < blocked_users.txt | tr -d ' ')
+            echo "- 🚫 **Blocked / Deactivated Users:** $BLOCKED_COUNT" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f "failed_users.txt" ]; then
+            FAILED_COUNT=$(wc -l < failed_users.txt | tr -d ' ')
+            echo "- ⚠️ **Failed User Sends:** $FAILED_COUNT" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 💾 Upload Output Logs & Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadcast-results-${{ github.run_id }}
+          path: |
+            broadcast.log
+            broadcast_state.json
+            blocked_users.txt
+            failed_users.txt
+          if-no-files-found: ignore

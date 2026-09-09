@@ -1,0 +1,74 @@
+name: 🤖 Telegram Remote Admin Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: 'Session run duration in hours (GitHub Actions max is ~5.5 hours)'
+        required: true
+        default: '5'
+        type: string
+
+concurrency:
+  group: telegram-admin-bot
+  cancel-in-progress: true
+
+jobs:
+  run-admin-bot:
+    name: Run Remote Control Bot
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      PYTHONUNBUFFERED: "1"
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+      BROADCAST_RATE: "25"
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔑 Verify Required Secrets
+        run: |
+          if [ -z "$ADMIN_BOT_TOKEN" ]; then
+            echo "::error::ADMIN_BOT_TOKEN secret is missing! Configure it in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "::error::BOT_TOKEN secret is missing! Configure it in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is missing! Configure it in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "✅ All secrets verified."
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🤖 Start Admin Control Bot
+        shell: bash
+        run: |
+          echo "Starting Admin Control Bot listener..."
+          HOURS="${{ github.event.inputs.duration_hours || '5' }}"
+          TIMEOUT_SEC=$((HOURS * 3600))
+          echo "Bot active for $HOURS hours ($TIMEOUT_SEC seconds)..."
+          timeout --preserve-status "$TIMEOUT_SEC" python admin_bot.py || true
+
+      - name: 💾 Upload Admin Bot Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-bot-logs-${{ github.run_id }}
+          path: admin_bot.log
+          if-no-files-found: ignore
